@@ -13,6 +13,8 @@ var defaultQobuzStreamAPIBaseURLs = []string{
 	"https://dab.yeet.su/api/stream?trackId=",
 	"https://dabmusic.xyz/api/stream?trackId=",
 	"https://qobuz.spotbye.qzz.io/api/track/",
+	"https://qbz.afkarxyz.qzz.io/api/track/",
+	"https://qobuz.squid.wtf/api/download-music?country=US&track_id=",
 }
 
 func GetQobuzStreamAPIBaseURLs() []string {

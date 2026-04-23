@@ -19,6 +19,20 @@ const (
 
 var defaultTidalAPIBaseURLs = []string{
 	"https://tidal.spotbye.qzz.io",
+	"https://eu-central.monochrome.tf",
+	"https://us-west.monochrome.tf",
+	"https://api.monochrome.tf",
+	"https://monochrome-api.samidy.com",
+	"https://tidal-api.binimum.org",
+	"https://tidal.kinoplus.online",
+	"https://triton.squid.wtf",
+	"https://vogel.qqdl.site",
+	"https://maus.qqdl.site",
+	"https://hund.qqdl.site",
+	"https://katze.qqdl.site",
+	"https://wolf.qqdl.site",
+	"https://hifi-one.spotisaver.net",
+	"https://hifi-two.spotisaver.net",
 }
 
 type tidalAPIListCache struct {

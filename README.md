@@ -14,6 +14,42 @@ Get Spotify tracks in true FLAC from Tidal, Qobuz & Amazon Music — no account 
 
 ![Image](https://github.com/user-attachments/assets/c2624ca5-8569-49f0-950e-4410b523cea1)
 
+## Web Mode (New)
+
+The project now supports a web runtime in addition to the desktop app.
+
+### Start backend API (Go)
+
+```bash
+go run -tags web .
+```
+
+By default the API/server runs on `http://localhost:8080`.
+
+### Start frontend (Vite)
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+The Vite dev server proxies `/api` requests to `http://localhost:8080`.
+
+### Production web build
+
+```bash
+cd frontend
+pnpm install
+pnpm build
+cd ..
+go run -tags web .
+```
+
+When `frontend/dist` exists, the Go server serves the built SPA and the API from one process.
+
+In web mode, native desktop dialogs are not available. Folder/audio selections are entered as server-side paths.
+
 ## Other projects
 
 ### [SpotiFLAC Next](https://github.com/spotbye/SpotiFLAC-Next)

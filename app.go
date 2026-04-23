@@ -26,6 +26,12 @@ type App struct {
 	ctx context.Context
 }
 
+var globalEventSink func(name string, payload ...interface{})
+
+func SetAppEventSink(sink func(name string, payload ...interface{})) {
+	globalEventSink = sink
+}
+
 type CurrentIPInfo struct {
 	IP          string `json:"ip"`
 	Country     string `json:"country"`
@@ -37,6 +43,15 @@ const checkOperationTimeout = 10 * time.Second
 
 func NewApp() *App {
 	return &App{}
+}
+
+func (a *App) emit(name string, payload ...interface{}) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, name, payload...)
+	}
+	if globalEventSink != nil {
+		globalEventSink(name, payload...)
+	}
 }
 
 type timedResult[T any] struct {
@@ -413,7 +428,7 @@ func (a *App) GetSpotifyMetadata(req SpotifyMetadataRequest) (string, error) {
 	}
 
 	data, err := backend.GetFilteredSpotifyData(ctx, req.URL, req.Batch, time.Duration(req.Delay*float64(time.Second)), separator, func(tracks interface{}) {
-		runtime.EventsEmit(a.ctx, "metadata-stream", tracks)
+		a.emit("metadata-stream", tracks)
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch metadata: %v", err)
@@ -1515,19 +1530,19 @@ type DownloadFFmpegResponse struct {
 }
 
 func (a *App) DownloadFFmpeg() DownloadFFmpegResponse {
-	runtime.EventsEmit(a.ctx, "ffmpeg:status", "starting")
+	a.emit("ffmpeg:status", "starting")
 	err := backend.DownloadFFmpeg(func(progress int) {
-		runtime.EventsEmit(a.ctx, "ffmpeg:progress", progress)
+		a.emit("ffmpeg:progress", progress)
 	})
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "ffmpeg:status", "failed")
+		a.emit("ffmpeg:status", "failed")
 		return DownloadFFmpegResponse{
 			Success: false,
 			Error:   err.Error(),
 		}
 	}
 
-	runtime.EventsEmit(a.ctx, "ffmpeg:status", "completed")
+	a.emit("ffmpeg:status", "completed")
 	return DownloadFFmpegResponse{
 		Success: true,
 		Message: "FFmpeg installed successfully",
@@ -1549,20 +1564,20 @@ type InstallFFmpegWithBrewResponse struct {
 }
 
 func (a *App) InstallFFmpegWithBrew() InstallFFmpegWithBrewResponse {
-	runtime.EventsEmit(a.ctx, "ffmpeg:status", "Installing FFmpeg via Homebrew...")
+	a.emit("ffmpeg:status", "Installing FFmpeg via Homebrew...")
 	err := backend.InstallFFmpegWithBrew(func(progress int, status string) {
-		runtime.EventsEmit(a.ctx, "ffmpeg:progress", progress)
-		runtime.EventsEmit(a.ctx, "ffmpeg:status", status)
+		a.emit("ffmpeg:progress", progress)
+		a.emit("ffmpeg:status", status)
 	})
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "ffmpeg:status", "failed")
+		a.emit("ffmpeg:status", "failed")
 		return InstallFFmpegWithBrewResponse{
 			Success: false,
 			Error:   err.Error(),
 		}
 	}
 
-	runtime.EventsEmit(a.ctx, "ffmpeg:status", "completed")
+	a.emit("ffmpeg:status", "completed")
 	return InstallFFmpegWithBrewResponse{
 		Success: true,
 		Message: "FFmpeg installed successfully via Homebrew",

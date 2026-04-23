@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import "../wailsjs/go/main/App";
 import "./index.css";
 import App from "./App.tsx";
 import { Toaster } from "@/components/ui/sonner";

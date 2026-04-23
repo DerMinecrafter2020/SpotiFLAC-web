@@ -59,6 +59,10 @@ func ValidateExecutable(path string) error {
 }
 
 func GetAppDir() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("SPOTIFLAC_APP_DIR")); override != "" {
+		return override, nil
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)

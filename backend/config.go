@@ -8,6 +8,9 @@ import (
 )
 
 func GetDefaultMusicPath() string {
+	if override := strings.TrimSpace(os.Getenv("SPOTIFLAC_MUSIC_DIR")); override != "" {
+		return override
+	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

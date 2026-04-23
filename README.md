@@ -50,6 +50,50 @@ When `frontend/dist` exists, the Go server serves the built SPA and the API from
 
 In web mode, native desktop dialogs are not available. Folder/audio selections are entered as server-side paths.
 
+## Docker + Compose
+
+You can run SpotiFLAC Web fully containerized with configurable host paths for app data and downloaded music.
+
+### 1. Configure paths
+
+Set these environment variables before starting compose (or put them in a `.env` file):
+
+- `SPOTIFLAC_DATA_PATH`: host path for app config/cache/history
+- `SPOTIFLAC_MUSIC_PATH`: host path where downloaded music is stored
+- `SPOTIFLAC_PORT` (optional): published web port (default `8080`)
+
+Examples:
+
+```powershell
+# Windows PowerShell
+$env:SPOTIFLAC_DATA_PATH = "C:/spotiflac/data"
+$env:SPOTIFLAC_MUSIC_PATH = "D:/Music/SpotiFLAC"
+$env:SPOTIFLAC_PORT = "8080"
+```
+
+```bash
+# Linux/macOS
+export SPOTIFLAC_DATA_PATH="$HOME/spotiflac/data"
+export SPOTIFLAC_MUSIC_PATH="$HOME/Music/SpotiFLAC"
+export SPOTIFLAC_PORT="8080"
+```
+
+### 2. Start with docker compose
+
+```bash
+docker compose up -d --build
+```
+
+Open: `http://localhost:8080` (or your configured `SPOTIFLAC_PORT`).
+
+### 3. Stop
+
+```bash
+docker compose down
+```
+
+Container runtime installs all required dependencies, including `ffmpeg`.
+
 ## Other projects
 
 ### [SpotiFLAC Next](https://github.com/spotbye/SpotiFLAC-Next)

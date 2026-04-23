@@ -1081,11 +1081,20 @@ func buildQobuzStatusCheckURLs(apiURL string) []string {
 }
 
 func buildQobuzStatusCheckURL(apiBase string) string {
-	apiBase = strings.TrimSpace(apiBase)
-	if strings.Contains(apiBase, "qobuz.spotbye.qzz.io") {
-		return fmt.Sprintf("%s360735657?quality=27", apiBase)
+	trackURL := fmt.Sprintf("%s360735657", strings.TrimSpace(apiBase))
+	if strings.Contains(trackURL, "quality=") {
+		return trackURL
 	}
-	return fmt.Sprintf("%s360735657&quality=27", apiBase)
+
+	separator := "&"
+	if !strings.Contains(trackURL, "?") {
+		separator = "?"
+	}
+	if strings.HasSuffix(trackURL, "?") || strings.HasSuffix(trackURL, "&") {
+		separator = ""
+	}
+
+	return fmt.Sprintf("%s%squality=27", trackURL, separator)
 }
 
 func buildAmazonStatusCheckURLs(apiURL string) []string {

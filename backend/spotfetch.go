@@ -129,6 +129,13 @@ func (c *SpotifyClient) getSessionInfo() error {
 		}
 	}
 
+	if c.clientVersion == "" {
+		fallbackVersionRegex := regexp.MustCompile(`"clientVersion"\s*:\s*"([^"]+)"`)
+		if versionMatches := fallbackVersionRegex.FindStringSubmatch(string(body)); len(versionMatches) > 1 {
+			c.clientVersion = strings.TrimSpace(versionMatches[1])
+		}
+	}
+
 	for _, cookie := range resp.Cookies() {
 		if cookie.Name == "sp_t" {
 			c.deviceID = cookie.Value
@@ -226,34 +233,54 @@ func (c *SpotifyClient) Query(payload map[string]interface{}) (map[string]interf
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", "https://api-partner.spotify.com/pathfinder/v2/query", bytes.NewBuffer(jsonData))
+	doQuery := func() (int, []byte, error) {
+		req, err := http.NewRequest("POST", "https://api-partner.spotify.com/pathfinder/v2/query", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return 0, nil, err
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+		req.Header.Set("Client-Token", c.clientToken)
+		if c.clientVersion != "" {
+			req.Header.Set("Spotify-App-Version", c.clientVersion)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return 0, nil, err
+		}
+
+		return resp.StatusCode, body, nil
+	}
+
+	statusCode, body, err := doQuery()
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	req.Header.Set("Client-Token", c.clientToken)
-	req.Header.Set("Spotify-App-Version", c.clientVersion)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		if initErr := c.Initialize(); initErr == nil {
+			statusCode, body, err = doQuery()
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	if resp.StatusCode != 200 {
+	if statusCode != http.StatusOK {
 		errorText := string(body)
 		if len(errorText) > 200 {
 			errorText = errorText[:200]
 		}
-		return nil, fmt.Errorf("%w: API query failed: HTTP %d | %s", SpotifyError, resp.StatusCode, errorText)
+		return nil, fmt.Errorf("%w: API query failed: HTTP %d | %s", SpotifyError, statusCode, errorText)
 	}
 
 	var result map[string]interface{}

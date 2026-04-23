@@ -139,10 +139,20 @@ func (q *QobuzDownloader) searchByISRC(isrc string) (*QobuzTrack, error) {
 }
 
 func buildQobuzAPIURL(apiBase string, trackID int64, quality string) string {
-	if strings.Contains(apiBase, "qobuz.spotbye.qzz.io") {
-		return fmt.Sprintf("%s%d?quality=%s", apiBase, trackID, quality)
+	trackURL := fmt.Sprintf("%s%d", strings.TrimSpace(apiBase), trackID)
+	if strings.Contains(trackURL, "quality=") {
+		return trackURL
 	}
-	return fmt.Sprintf("%s%d&quality=%s", apiBase, trackID, quality)
+
+	separator := "&"
+	if !strings.Contains(trackURL, "?") {
+		separator = "?"
+	}
+	if strings.HasSuffix(trackURL, "?") || strings.HasSuffix(trackURL, "&") {
+		separator = ""
+	}
+
+	return fmt.Sprintf("%s%squality=%s", trackURL, separator, quality)
 }
 
 func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, quality string) (string, error) {

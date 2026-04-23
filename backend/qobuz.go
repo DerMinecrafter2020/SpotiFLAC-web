@@ -156,25 +156,44 @@ func buildQobuzAPIURL(apiBase string, trackID int64, quality string) string {
 }
 
 func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, quality string) (string, error) {
+	tryRequest := func(apiURL string) ([]byte, int, error) {
+		req, err := NewRequestWithDefaultHeaders(http.MethodGet, apiURL, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		resp, err := q.client.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, resp.StatusCode, err
+		}
+
+		return body, resp.StatusCode, nil
+	}
+
 	apiURL := buildQobuzAPIURL(apiBase, trackID, quality)
-	req, err := NewRequestWithDefaultHeaders(http.MethodGet, apiURL, nil)
+	body, statusCode, err := tryRequest(apiURL)
 	if err != nil {
 		return "", err
 	}
 
-	resp, err := q.client.Do(req)
-	if err != nil {
-		return "", err
+	if statusCode == http.StatusNotFound {
+		if fallbackURL := removeQobuzQualityParam(apiURL); fallbackURL != "" && fallbackURL != apiURL {
+			fallbackBody, fallbackStatus, fallbackErr := tryRequest(fallbackURL)
+			if fallbackErr == nil {
+				body = fallbackBody
+				statusCode = fallbackStatus
+			}
+		}
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+	if statusCode != http.StatusOK {
+		return "", fmt.Errorf("status %d", statusCode)
 	}
 
 	if len(body) == 0 {
@@ -196,6 +215,22 @@ func (q *QobuzDownloader) DownloadFromStandard(apiBase string, trackID int64, qu
 	}
 
 	return "", fmt.Errorf("invalid response")
+}
+
+func removeQobuzQualityParam(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+
+	query := parsed.Query()
+	if _, exists := query["quality"]; !exists {
+		return rawURL
+	}
+
+	query.Del("quality")
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (q *QobuzDownloader) GetDownloadURL(trackID int64, quality string, allowFallback bool) (string, error) {

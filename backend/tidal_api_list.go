@@ -17,6 +17,10 @@ const (
 	tidalAPIListCacheFile = "tidal-api-urls.json"
 )
 
+var defaultTidalAPIBaseURLs = []string{
+	"https://tidal.spotbye.qzz.io",
+}
+
 type tidalAPIListCache struct {
 	URLs        []string `json:"urls"`
 	LastUsedURL string   `json:"last_used_url,omitempty"`
@@ -145,11 +149,6 @@ func fetchTidalAPIURLsFromGist() ([]string, error) {
 }
 
 func PrimeTidalAPIList() error {
-	_, err := RefreshTidalAPIList(true)
-	if err != nil {
-		fmt.Printf("Warning: failed to refresh Tidal API list from gist: %v\n", err)
-	}
-
 	tidalAPIListMu.Lock()
 	defer tidalAPIListMu.Unlock()
 
@@ -158,8 +157,8 @@ func PrimeTidalAPIList() error {
 		return loadErr
 	}
 
-	if len(state.URLs) == 0 {
-		return fmt.Errorf("tidal api cache is empty")
+	if _, err := ensureTidalAPIURLsAvailableLocked(state); err != nil {
+		return err
 	}
 
 	if state.UpdatedAt == 0 {
@@ -215,11 +214,7 @@ func GetTidalAPIList() ([]string, error) {
 		return nil, err
 	}
 
-	if len(state.URLs) == 0 {
-		return nil, fmt.Errorf("no cached tidal api urls")
-	}
-
-	return append([]string(nil), state.URLs...), nil
+	return ensureTidalAPIURLsAvailableLocked(state)
 }
 
 func GetRotatedTidalAPIList() ([]string, error) {
@@ -231,12 +226,63 @@ func GetRotatedTidalAPIList() ([]string, error) {
 		return nil, err
 	}
 
-	urls := state.URLs
+	urls, ensureErr := ensureTidalAPIURLsAvailableLocked(state)
+	if ensureErr != nil {
+		return nil, ensureErr
+	}
+
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("no cached tidal api urls")
 	}
 
 	return rotateTidalAPIURLs(urls, state.LastUsedURL), nil
+}
+
+func ensureTidalAPIURLsAvailableLocked(state *tidalAPIListCache) ([]string, error) {
+	if state == nil {
+		state = &tidalAPIListCache{}
+	}
+
+	if len(state.URLs) > 0 {
+		return append([]string(nil), state.URLs...), nil
+	}
+
+	urls, fetchErr := fetchTidalAPIURLsFromGist()
+	if fetchErr == nil && len(urls) > 0 {
+		state.URLs = urls
+		state.UpdatedAt = time.Now().Unix()
+		state.Source = "gist"
+		if !containsString(state.URLs, state.LastUsedURL) {
+			state.LastUsedURL = ""
+		}
+		if err := saveTidalAPIListStateLocked(state); err != nil {
+			return append([]string(nil), state.URLs...), err
+		}
+		return append([]string(nil), state.URLs...), nil
+	}
+
+	fallbackURLs := normalizeTidalAPIURLs(defaultTidalAPIBaseURLs)
+	if len(fallbackURLs) > 0 {
+		state.URLs = fallbackURLs
+		state.UpdatedAt = time.Now().Unix()
+		state.Source = "embedded-fallback"
+		if !containsString(state.URLs, state.LastUsedURL) {
+			state.LastUsedURL = ""
+		}
+		if err := saveTidalAPIListStateLocked(state); err != nil {
+			return append([]string(nil), state.URLs...), err
+		}
+		if fetchErr != nil {
+			fmt.Printf("Warning: failed to refresh Tidal API list from gist, using embedded fallback: %v\n", fetchErr)
+		}
+		return append([]string(nil), state.URLs...), nil
+	}
+
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+
+	return nil, fmt.Errorf("no cached tidal api urls")
 }
 
 func RememberTidalAPIUsage(apiURL string) error {

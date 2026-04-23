@@ -23,6 +23,16 @@ type AmazonStreamResponse struct {
 	DecryptionKey string `json:"decryptionKey"`
 }
 
+func extractAmazonASIN(amazonURL string) (string, error) {
+	asinRegex := regexp.MustCompile(`(B[0-9A-Z]{9})`)
+	asin := asinRegex.FindString(amazonURL)
+	if asin == "" {
+		return "", fmt.Errorf("failed to extract ASIN from URL: %s", amazonURL)
+	}
+
+	return asin, nil
+}
+
 func NewAmazonDownloader() *AmazonDownloader {
 	return &AmazonDownloader{
 		client: &http.Client{
@@ -49,31 +59,51 @@ func (a *AmazonDownloader) GetAmazonURLFromSpotify(spotifyTrackID string) (strin
 }
 
 func (a *AmazonDownloader) DownloadFromAfkarXYZ(amazonURL, outputDir, quality string) (string, error) {
-
-	asinRegex := regexp.MustCompile(`(B[0-9A-Z]{9})`)
-	asin := asinRegex.FindString(amazonURL)
-	if asin == "" {
-		return "", fmt.Errorf("failed to extract ASIN from URL: %s", amazonURL)
+	asin, err := extractAmazonASIN(amazonURL)
+	if err != nil {
+		return "", err
 	}
 
-	apiURL := fmt.Sprintf("%s/api/track/%s", amazonMusicAPIBaseURL, asin)
+	apiURL := fmt.Sprintf("%s/api/track/%s", strings.TrimRight(amazonMusicAPIBaseURL, "/"), asin)
 	req, err := NewRequestWithDefaultHeaders(http.MethodGet, apiURL, nil)
 	if err != nil {
 		return "", err
 	}
 
-	fmt.Printf("Fetching from Amazon API (ASIN: %s)...\n", asin)
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+	fetchResponse := func() ([]byte, error) {
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			fmt.Printf("Fetching from Amazon API (ASIN: %s, attempt %d/3)...\n", asin, attempt+1)
 
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Amazon API returned status %d", resp.StatusCode)
+			resp, err := a.client.Do(req)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				lastErr = readErr
+				continue
+			}
+
+			if resp.StatusCode == http.StatusOK {
+				return bodyBytes, nil
+			}
+
+			lastErr = fmt.Errorf("Amazon API returned status %d", resp.StatusCode)
+			if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusBadGateway && resp.StatusCode != http.StatusGatewayTimeout {
+				break
+			}
+
+			time.Sleep(time.Duration(attempt+1) * 800 * time.Millisecond)
+		}
+
+		return nil, lastErr
 	}
 
-	bodyBytes, err := io.ReadAll(resp.Body)
+	bodyBytes, err := fetchResponse()
 	if err != nil {
 		return "", err
 	}
@@ -202,7 +232,215 @@ func (a *AmazonDownloader) DownloadFromAfkarXYZ(amazonURL, outputDir, quality st
 }
 
 func (a *AmazonDownloader) DownloadFromService(amazonURL, outputDir, quality string) (string, error) {
-	return a.DownloadFromAfkarXYZ(amazonURL, outputDir, quality)
+	asin, err := extractAmazonASIN(amazonURL)
+	if err != nil {
+		return "", err
+	}
+
+	bases := prioritizeProviders("amazon", GetAmazonMusicAPIBaseURLs())
+	var lastErr error
+
+	for _, baseURL := range bases {
+		baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+		if baseURL == "" {
+			continue
+		}
+
+		apiURL := fmt.Sprintf("%s/api/track/%s", baseURL, asin)
+		req, reqErr := NewRequestWithDefaultHeaders(http.MethodGet, apiURL, nil)
+		if reqErr != nil {
+			lastErr = reqErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		fetchResponse := func() ([]byte, error) {
+			var attemptErr error
+			for attempt := 0; attempt < 3; attempt++ {
+				resp, doErr := a.client.Do(req)
+				if doErr != nil {
+					attemptErr = doErr
+					continue
+				}
+
+				bodyBytes, readErr := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if readErr != nil {
+					attemptErr = readErr
+					continue
+				}
+
+				if resp.StatusCode == http.StatusOK {
+					return bodyBytes, nil
+				}
+
+				attemptErr = fmt.Errorf("Amazon API returned status %d", resp.StatusCode)
+				if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusBadGateway && resp.StatusCode != http.StatusGatewayTimeout {
+					break
+				}
+
+				time.Sleep(time.Duration(attempt+1) * 800 * time.Millisecond)
+			}
+
+			return nil, attemptErr
+		}
+
+		bodyBytes, fetchErr := fetchResponse()
+		if fetchErr != nil {
+			lastErr = fetchErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		var apiResp AmazonStreamResponse
+		if unmarshalErr := json.Unmarshal(bodyBytes, &apiResp); unmarshalErr != nil {
+			lastErr = fmt.Errorf("failed to decode response: %w", unmarshalErr)
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		if strings.TrimSpace(apiResp.StreamURL) == "" {
+			lastErr = fmt.Errorf("no stream URL found in response")
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		fileName := fmt.Sprintf("%s.m4a", asin)
+		filePath := filepath.Join(outputDir, fileName)
+
+		out, createErr := os.Create(filePath)
+		if createErr != nil {
+			lastErr = createErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		dlReq, dlReqErr := NewRequestWithDefaultHeaders(http.MethodGet, apiResp.StreamURL, nil)
+		if dlReqErr != nil {
+			out.Close()
+			os.Remove(filePath)
+			lastErr = dlReqErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		dlResp, dlErr := a.client.Do(dlReq)
+		if dlErr != nil {
+			out.Close()
+			os.Remove(filePath)
+			lastErr = dlErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		pw := NewProgressWriter(out)
+		_, copyErr := io.Copy(pw, dlResp.Body)
+		dlResp.Body.Close()
+		out.Close()
+		if copyErr != nil {
+			os.Remove(filePath)
+			lastErr = copyErr
+			recordProviderFailure("amazon", baseURL)
+			continue
+		}
+
+		fmt.Printf("\rDownloaded: %.2f MB (Complete)\n", float64(pw.GetTotal())/(1024*1024))
+
+		if apiResp.DecryptionKey != "" {
+			fmt.Printf("Decrypting file...\n")
+
+			ffprobePath, ffprobeErr := GetFFprobePath()
+			var codec string
+			if ffprobeErr == nil {
+				cmdProbe := exec.Command(ffprobePath,
+					"-v", "quiet",
+					"-select_streams", "a:0",
+					"-show_entries", "stream=codec_name",
+					"-of", "default=noprint_wrappers=1:nokey=1",
+					filePath,
+				)
+				setHideWindow(cmdProbe)
+				codecOutput, _ := cmdProbe.Output()
+				codec = strings.TrimSpace(string(codecOutput))
+				fmt.Printf("Detected codec: %s\n", codec)
+			}
+
+			targetExt := ".m4a"
+			if codec == "flac" {
+				targetExt = ".flac"
+			}
+
+			decryptedFilename := "dec_" + fileName + targetExt
+			if targetExt == ".flac" && strings.HasSuffix(fileName, ".m4a") {
+				decryptedFilename = "dec_" + strings.TrimSuffix(fileName, ".m4a") + ".flac"
+			}
+
+			decryptedPath := filepath.Join(outputDir, decryptedFilename)
+
+			ffmpegPath, ffmpegErr := GetFFmpegPath()
+			if ffmpegErr != nil {
+				os.Remove(filePath)
+				lastErr = fmt.Errorf("ffmpeg not found for decryption: %w", ffmpegErr)
+				recordProviderFailure("amazon", baseURL)
+				continue
+			}
+
+			if validErr := ValidateExecutable(ffmpegPath); validErr != nil {
+				os.Remove(filePath)
+				lastErr = fmt.Errorf("invalid ffmpeg executable: %w", validErr)
+				recordProviderFailure("amazon", baseURL)
+				continue
+			}
+
+			key := strings.TrimSpace(apiResp.DecryptionKey)
+			cmd := exec.Command(ffmpegPath,
+				"-decryption_key", key,
+				"-i", filePath,
+				"-c", "copy",
+				"-y",
+				decryptedPath,
+			)
+
+			setHideWindow(cmd)
+			output, cmdErr := cmd.CombinedOutput()
+			if cmdErr != nil {
+				os.Remove(filePath)
+				outStr := string(output)
+				if len(outStr) > 500 {
+					outStr = outStr[len(outStr)-500:]
+				}
+				lastErr = fmt.Errorf("ffmpeg decryption failed: %v\nTail Output: %s", cmdErr, outStr)
+				recordProviderFailure("amazon", baseURL)
+				continue
+			}
+
+			if info, statErr := os.Stat(decryptedPath); statErr != nil || info.Size() == 0 {
+				os.Remove(filePath)
+				lastErr = fmt.Errorf("decrypted file missing or empty")
+				recordProviderFailure("amazon", baseURL)
+				continue
+			}
+
+			_ = os.Remove(filePath)
+			finalPath := filepath.Join(outputDir, strings.TrimPrefix(decryptedFilename, "dec_"))
+			if renameErr := os.Rename(decryptedPath, finalPath); renameErr != nil {
+				lastErr = fmt.Errorf("failed to rename decrypted file: %w", renameErr)
+				recordProviderFailure("amazon", baseURL)
+				continue
+			}
+			filePath = finalPath
+			fmt.Println("Decryption successful")
+		}
+
+		recordProviderSuccess("amazon", baseURL)
+		return filePath, nil
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("Amazon API request failed")
+	}
+
+	return "", lastErr
 }
 
 func (a *AmazonDownloader) DownloadByURL(amazonURL, outputDir, quality, filenameFormat, playlistName, playlistOwner string, includeTrackNumber bool, position int, spotifyTrackName, spotifyArtistName, spotifyAlbumName, spotifyAlbumArtist, spotifyReleaseDate, spotifyCoverURL string, spotifyTrackNumber, spotifyDiscNumber, spotifyTotalTracks int, embedMaxQualityCover bool, spotifyTotalDiscs int, spotifyCopyright, spotifyPublisher, spotifyComposer, metadataSeparator, isrcOverride, spotifyURL string, useFirstArtistOnly bool, useSingleGenre bool, embedGenre bool) (string, error) {

@@ -62,6 +62,8 @@ Set these environment variables before starting compose (or put them in a `.env`
 - `SPOTIFLAC_MUSIC_PATH`: host path where downloaded music is stored
 - `SPOTIFLAC_PORT` (optional): published web port (default `8080`)
 
+You can start from `.env.example` and set your values there.
+
 Examples:
 
 ```powershell

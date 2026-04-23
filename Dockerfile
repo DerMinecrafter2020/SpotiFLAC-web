@@ -4,9 +4,11 @@ FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /src/frontend
 
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN corepack enable && corepack prepare pnpm@10.0.0 --activate && pnpm install --frozen-lockfile
+RUN corepack enable && corepack prepare pnpm@10.0.0 --activate && pnpm install --frozen-lockfile --ignore-scripts
 
 COPY frontend/ ./
+COPY wails.json /src/wails.json
+RUN pnpm run postinstall
 RUN pnpm build
 
 FROM golang:1.26-bookworm AS go-builder
